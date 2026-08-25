@@ -21,6 +21,12 @@ func (s *Store) CreateSnapshot(batchID int64, content string) (*model.Snapshot, 
 	if model.IsBatchImmutable(batchStatus) {
 		return nil, model.ErrArchivedMutation
 	}
+	// A snapshot may only be created once the batch diagnosis is confirmed;
+	// rejecting here keeps the store consistent with the publish lifecycle
+	// and guarantees an unconfirmed batch never leaves a draft snapshot row.
+	if !model.CanPublishSnapshot(batchStatus) {
+		return nil, model.ErrStateTransition
+	}
 	var version int
 	err := s.db.QueryRow(
 		`SELECT COALESCE(MAX(version),0)+1 FROM snapshots WHERE batch_id=?`, batchID).Scan(&version)

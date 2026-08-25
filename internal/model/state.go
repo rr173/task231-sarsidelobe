@@ -107,9 +107,13 @@ func IsBatchImmutable(status string) bool {
 	return status == BatchArchived
 }
 
-// CanPublishSnapshot reports whether diagnosis review has completed.
+// CanPublishSnapshot reports whether the batch diagnosis has been confirmed by
+// a reviewer. A diagnosis snapshot may only be published once the batch reaches
+// the confirmed state; receiving, pending_diagnosis and needs_review have not
+// yet committed to a verdict and must not be frozen. Archived batches are
+// rejected elsewhere as read-only.
 func CanPublishSnapshot(status string) bool {
-	return status != BatchArchived
+	return status == BatchConfirmed
 }
 
 // CanRegisterAnalysisInput reports whether raw peak inputs may still be

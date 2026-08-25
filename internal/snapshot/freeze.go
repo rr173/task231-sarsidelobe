@@ -24,23 +24,32 @@ func (f *Freezer) ValidatePublishBatch(batchStatus string) error {
 	return nil
 }
 
-// ValidateCreate prevents any new snapshot row from being created for an
-// archived batch, including callers that bypass the publish state check.
+// ValidateCreate prevents a snapshot row from being created for a batch that
+// is not ready to publish: archived batches are read-only and unconfirmed
+// batches have no finalized diagnosis to freeze. This mirrors the publish
+// check so callers that bypass ValidatePublishBatch cannot leave a draft row.
 func (f *Freezer) ValidateCreate(batchStatus string) error {
 	if model.IsBatchImmutable(batchStatus) {
 		return model.ErrArchivedMutation
+	}
+	if !model.CanPublishSnapshot(batchStatus) {
+		return model.ErrStateTransition
 	}
 	return nil
 }
 
 // ValidatePublish checks that publishing is allowed for the batch state and
-// that the snapshot is a draft.
+// that the snapshot is a draft. The batch must be confirmed (a published
+// snapshot freezes a committed diagnosis) and must not be archived.
 func (f *Freezer) ValidatePublish(batchStatus string, snap *model.Snapshot) error {
 	if snap.Status != model.SnapDraft {
 		return model.ErrStateTransition
 	}
 	if batchStatus == model.BatchArchived {
 		return model.ErrArchivedMutation
+	}
+	if !model.CanPublishSnapshot(batchStatus) {
+		return model.ErrStateTransition
 	}
 	return nil
 }
