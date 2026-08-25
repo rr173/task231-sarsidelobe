@@ -108,6 +108,9 @@ func runSmokeTest(dbPath string) error {
 	if err != nil {
 		return fmt.Errorf("analyze: %w", err)
 	}
+	if _, err := svc.ConfirmBatch(b.ID); err != nil {
+		return fmt.Errorf("confirm batch: %w", err)
+	}
 	if len(cands) != 1 {
 		return fmt.Errorf("expected 1 candidate, got %d", len(cands))
 	}

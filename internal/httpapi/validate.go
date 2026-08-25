@@ -66,6 +66,9 @@ func runSelfTest(svc *service.Service) (map[string]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("analyze: %w", err)
 	}
+	if _, err := svc.ConfirmBatch(b.ID); err != nil {
+		return nil, fmt.Errorf("confirm batch: %w", err)
+	}
 	// 5. publish a snapshot.
 	snap, err := svc.PublishSnapshot(b.ID)
 	if err != nil {
