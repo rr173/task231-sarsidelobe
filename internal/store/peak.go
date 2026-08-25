@@ -12,6 +12,16 @@ import (
 // duplicate region hash for the batch aborts the whole insert (idempotency
 // is enforced at the service layer by filtering hashes already present).
 func (s *Store) InsertPeakRegions(batchID int64, regions []model.PeakRegion) error {
+	var batchStatus string
+	if err := s.db.QueryRow(`SELECT status FROM batches WHERE id=?`, batchID).Scan(&batchStatus); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.ErrNotFound
+		}
+		return err
+	}
+	if !model.CanRegisterAnalysisInput(batchStatus) {
+		return model.ErrStateTransition
+	}
 	return s.Tx(func(tx *sql.Tx) error {
 		for i := range regions {
 			r := &regions[i]
@@ -21,7 +31,8 @@ func (s *Store) InsertPeakRegions(batchID int64, regions []model.PeakRegion) err
 			res, err := tx.Exec(`
 				INSERT INTO peak_regions(batch_id,region_hash,range_start,range_end,
 					azimuth_start,azimuth_end,peak_azimuth,peak_intensity_db,status,created_at)
-				VALUES(?,?,?,?,?,?,?,?,?,?)`,
+				VALUES(?,?,?,?,?,?,?,?,?,?)
+				ON CONFLICT(batch_id,region_hash) DO NOTHING`,
 				r.BatchID, r.RegionHash, r.RangeStart, r.RangeEnd,
 				r.AzimuthStart, r.AzimuthEnd, r.PeakAzimuth, r.PeakIntensityDB,
 				r.Status, nowISO())
@@ -81,6 +92,16 @@ func (s *Store) GetPeakRegion(id int64) (*model.PeakRegion, error) {
 
 // UpdatePeakStatus moves a peak region to a new state.
 func (s *Store) UpdatePeakStatus(id int64, status string) error {
+	current, err := s.GetPeakRegion(id)
+	if err != nil {
+		return err
+	}
+	if current.Status == model.PeakExcluded || current.Status == model.PeakSidelobe {
+		return model.ErrPeakSealed
+	}
+	if !model.CanPeakTransition(current.Status, status) {
+		return model.ErrStateTransition
+	}
 	res, err := s.db.Exec(`UPDATE peak_regions SET status=? WHERE id=?`, status, id)
 	if err != nil {
 		return fmt.Errorf("update peak status: %w", err)

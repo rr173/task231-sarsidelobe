@@ -143,6 +143,20 @@ func (s *Store) ResolvePeakByCandidate(c *model.Candidate, confirmed bool) error
 	if confirmed {
 		sideStatus = model.PeakSidelobe
 	}
+	// Analysis produces candidates from raw regions. Promote each source to the
+	// intermediate candidate state before applying the reviewed conclusion so
+	// the persisted peak lifecycle remains valid.
+	for _, id := range []int64{c.MainPeakID, c.SidelobePeakID} {
+		peak, err := s.GetPeakRegion(id)
+		if err != nil {
+			return err
+		}
+		if peak.Status == model.PeakRaw {
+			if err := s.UpdatePeakStatus(id, model.PeakCandidate); err != nil {
+				return err
+			}
+		}
+	}
 	if err := s.UpdatePeakStatus(c.MainPeakID, mainStatus); err != nil {
 		return err
 	}

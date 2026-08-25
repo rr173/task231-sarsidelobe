@@ -6,6 +6,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -13,7 +14,8 @@ import (
 
 // Store wraps the underlying *sql.DB and exposes CRUD for every entity.
 type Store struct {
-	db *sql.DB
+	db      *sql.DB
+	writeMu sync.Mutex
 }
 
 // Open opens (or creates) the SQLite database at dbPath and applies the
@@ -46,6 +48,8 @@ func (s *Store) DB() *sql.DB { return s.db }
 // Tx runs fn inside a transaction; the transaction commits only when fn
 // returns nil.
 func (s *Store) Tx(fn func(tx *sql.Tx) error) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)

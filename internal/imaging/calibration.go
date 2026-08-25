@@ -6,6 +6,7 @@ import "task231-sarsidelobe/internal/model"
 // It carries the first-lobe attenuation and the acceptance bands used by the
 // classifier.
 type Calibration struct {
+	Version         int
 	FirstLobeDB     float64
 	OffsetTolerance float64
 	RatioMinDB      float64
@@ -17,6 +18,7 @@ type Calibration struct {
 // sinc first sidelobe (~ -13.26 dB).
 func DefaultCalibration() Calibration {
 	return Calibration{
+		Version:         0,
 		FirstLobeDB:     13.26,
 		OffsetTolerance: 0.25,
 		RatioMinDB:      6.0,
@@ -30,6 +32,7 @@ func FromVersion(v *model.CalibrationVersion) Calibration {
 		return DefaultCalibration()
 	}
 	return Calibration{
+		Version:         v.Version,
 		FirstLobeDB:     v.FirstLobeDB,
 		OffsetTolerance: v.OffsetTolerance,
 		RatioMinDB:      v.RatioMinDB,

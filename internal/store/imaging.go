@@ -12,6 +12,28 @@ import (
 // can only have one parameter row (UNIQUE(batch_id)); a second registration
 // replaces the first.
 func (s *Store) UpsertImagingParams(p *model.ImagingParams) (*model.ImagingParams, error) {
+	var batchStatus string
+	if err := s.db.QueryRow(`SELECT status FROM batches WHERE id=?`, p.BatchID).Scan(&batchStatus); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, model.ErrNotFound
+		}
+		return nil, err
+	}
+	if !model.CanUpdateImagingParams(batchStatus) {
+		if batchStatus == model.BatchArchived {
+			return nil, model.ErrArchivedMutation
+		}
+		return nil, model.ErrStateTransition
+	}
+	if p.CalibrationID == 0 {
+		active, err := s.GetActiveCalibration()
+		if err != nil {
+			return nil, err
+		}
+		if active != nil {
+			p.CalibrationID = active.ID
+		}
+	}
 	p.CreatedAt = nowISO()
 	_, err := s.db.Exec(`
 		INSERT INTO imaging_params(batch_id,wavelength_m,slant_range_m,aperture_len_m,
@@ -57,29 +79,21 @@ func (s *Store) GetImagingParams(batchID int64) (*model.ImagingParams, error) {
 // CreateCalibration inserts a new calibration version (version number is
 // auto-incremented relative to the current max).
 func (s *Store) CreateCalibration(name string, firstLobeDB, offsetTol, ratioMinDB, ratioMaxDB float64) (*model.CalibrationVersion, error) {
-	var version int
-	err := s.db.QueryRow(`SELECT COALESCE(MAX(version),0)+1 FROM calibration_versions`).Scan(&version)
-	if err != nil {
-		return nil, fmt.Errorf("next calibration version: %w", err)
-	}
-	v := &model.CalibrationVersion{
-		Version:         version,
-		Name:            name,
-		Active:          false,
-		FirstLobeDB:     firstLobeDB,
-		OffsetTolerance: offsetTol,
-		RatioMinDB:      ratioMinDB,
-		RatioMaxDB:      ratioMaxDB,
-		CreatedAt:       nowISO(),
-	}
-	res, err := s.db.Exec(`
-		INSERT INTO calibration_versions(version,name,active,first_lobe_db,offset_tolerance,ratio_min_db,ratio_max_db,created_at)
-		VALUES(?,?,0,?,?,?,?,?)`,
-		v.Version, v.Name, v.FirstLobeDB, v.OffsetTolerance, v.RatioMinDB, v.RatioMaxDB, v.CreatedAt)
-	if err != nil {
-		return nil, fmt.Errorf("create calibration: %w", err)
-	}
-	v.ID, err = res.LastInsertId()
+	v := &model.CalibrationVersion{Name: name, Active: false, FirstLobeDB: firstLobeDB, OffsetTolerance: offsetTol, RatioMinDB: ratioMinDB, RatioMaxDB: ratioMaxDB, CreatedAt: nowISO()}
+	err := s.Tx(func(tx *sql.Tx) error {
+		if err := tx.QueryRow(`SELECT COALESCE(MAX(version),0)+1 FROM calibration_versions`).Scan(&v.Version); err != nil {
+			return fmt.Errorf("next calibration version: %w", err)
+		}
+		res, err := tx.Exec(`
+			INSERT INTO calibration_versions(version,name,active,first_lobe_db,offset_tolerance,ratio_min_db,ratio_max_db,created_at)
+			VALUES(?,?,0,?,?,?,?,?)`,
+			v.Version, v.Name, v.FirstLobeDB, v.OffsetTolerance, v.RatioMinDB, v.RatioMaxDB, v.CreatedAt)
+		if err != nil {
+			return fmt.Errorf("create calibration: %w", err)
+		}
+		v.ID, err = res.LastInsertId()
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}

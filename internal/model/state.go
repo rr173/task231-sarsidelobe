@@ -6,11 +6,11 @@ package model
 // Batch states: a SAR imaging batch travels from reception through diagnosis
 // review to confirmation and finally archival.
 const (
-	BatchReceiving      = "receiving"        // 接收中
-	BatchPending        = "pending_diagnosis" // 待诊断
-	BatchReview         = "needs_review"     // 需复核
-	BatchConfirmed      = "confirmed"        // 已确认
-	BatchArchived       = "archived"         // 封存
+	BatchReceiving = "receiving"         // 接收中
+	BatchPending   = "pending_diagnosis" // 待诊断
+	BatchReview    = "needs_review"      // 需复核
+	BatchConfirmed = "confirmed"         // 已确认
+	BatchArchived  = "archived"          // 封存
 )
 
 // BatchTransitions maps current state -> set of allowed next states.
@@ -75,10 +75,10 @@ var SnapshotTransitions = map[string]map[string]bool{
 
 // Analysis run states.
 const (
-	RunPending   = "pending"   // 排队中
-	RunRunning   = "running"   // 运行中
-	RunFinished  = "finished"  // 完成
-	RunFailed    = "failed"    // 失败
+	RunPending  = "pending"  // 排队中
+	RunRunning  = "running"  // 运行中
+	RunFinished = "finished" // 完成
+	RunFailed   = "failed"   // 失败
 )
 
 // CanTransition reports whether from -> to is legal for the batch machine.
@@ -99,4 +99,27 @@ func CanCandidateTransition(from, to string) bool {
 // CanSnapshotTransition reports whether from -> to is legal for snapshots.
 func CanSnapshotTransition(from, to string) bool {
 	return SnapshotTransitions[from][to]
+}
+
+// IsBatchImmutable reports whether the batch can no longer accept persisted
+// diagnosis artifacts.
+func IsBatchImmutable(status string) bool {
+	return status == BatchArchived
+}
+
+// CanPublishSnapshot reports whether diagnosis review has completed.
+func CanPublishSnapshot(status string) bool {
+	return status == BatchConfirmed
+}
+
+// CanRegisterAnalysisInput reports whether raw peak inputs may still be
+// appended before analysis has entered review.
+func CanRegisterAnalysisInput(status string) bool {
+	return status == BatchReceiving || status == BatchPending
+}
+
+// CanUpdateImagingParams reports whether acquisition geometry is still mutable
+// before analysis has produced reviewable findings.
+func CanUpdateImagingParams(status string) bool {
+	return status == BatchReceiving || status == BatchPending
 }

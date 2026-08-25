@@ -13,32 +13,34 @@ import (
 
 // Content is the JSON payload frozen into a snapshot.
 type Content struct {
-	BatchCode     string           `json:"batch_code"`
-	Geometry      imaging.Geometry `json:"geometry"`
-	CalibrationDB float64          `json:"calibration_first_lobe_db"`
-	Sources       []SourceSummary  `json:"sources"`
-	FinalCandidates int            `json:"final_candidates"`
-	Confirmed     int              `json:"confirmed"`
-	Rejected      int              `json:"rejected"`
-	Insufficient  int              `json:"insufficient"`
+	BatchCode          string           `json:"batch_code"`
+	Geometry           imaging.Geometry `json:"geometry"`
+	CalibrationVersion int              `json:"calibration_version"`
+	CalibrationDB      float64          `json:"calibration_first_lobe_db"`
+	Sources            []SourceSummary  `json:"sources"`
+	FinalCandidates    int              `json:"final_candidates"`
+	Confirmed          int              `json:"confirmed"`
+	Rejected           int              `json:"rejected"`
+	Insufficient       int              `json:"insufficient"`
 }
 
 // SourceSummary is one candidate's frozen verdict.
 type SourceSummary struct {
-	Source       string  `json:"source"`
-	OffsetUnits  float64 `json:"offset_units"`
-	RatioDB      float64 `json:"intensity_ratio_db"`
-	Response     float64 `json:"response_score"`
-	Status       string  `json:"status"`
+	Source      string  `json:"source"`
+	OffsetUnits float64 `json:"offset_units"`
+	RatioDB     float64 `json:"intensity_ratio_db"`
+	Response    float64 `json:"response_score"`
+	Status      string  `json:"status"`
 }
 
 // Build renders the frozen content for a batch. Batch code and geometry come
 // from the caller; candidates are summarised with their current verdicts.
 func Build(batchCode string, geom imaging.Geometry, cal imaging.Calibration, candidates []model.Candidate) (string, error) {
 	c := Content{
-		BatchCode:     batchCode,
-		Geometry:      geom,
-		CalibrationDB: cal.FirstLobeDB,
+		BatchCode:          batchCode,
+		Geometry:           geom,
+		CalibrationVersion: cal.Version,
+		CalibrationDB:      cal.FirstLobeDB,
 	}
 	for _, cand := range candidates {
 		c.Sources = append(c.Sources, SourceSummary{
