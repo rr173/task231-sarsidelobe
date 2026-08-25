@@ -94,6 +94,17 @@ func (s *Store) UpdateSnapshotStatus(id int64, status string) error {
 	return nil
 }
 
+// DeleteSnapshot removes a snapshot row. It is used to roll back a draft
+// when a publish request fails after the draft row was already inserted, so
+// no unusable draft survives a rejected publish.
+func (s *Store) DeleteSnapshot(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM snapshots WHERE id=?`, id)
+	if err != nil {
+		return fmt.Errorf("delete snapshot: %w", err)
+	}
+	return nil
+}
+
 // ReplaceSnapshot atomically supersedes a published snapshot and creates the
 // next published version with the supplied frozen content.
 func (s *Store) ReplaceSnapshot(oldID int64, content string) (*model.Snapshot, error) {

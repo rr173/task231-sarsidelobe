@@ -334,6 +334,12 @@ func (s *Service) PublishSnapshot(batchID int64) (*model.Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Validate the batch lifecycle before any row is written, otherwise a
+	// rejected publish request would leave a draft snapshot behind in the
+	// database and resurface as an unusable version in later listings.
+	if err := s.Freezer.ValidatePublishBatch(b.Status); err != nil {
+		return nil, err
+	}
 	params, err := s.Store.GetImagingParams(batchID)
 	if err != nil {
 		return nil, model.ErrNoParams
@@ -364,10 +370,11 @@ func (s *Service) PublishSnapshot(batchID int64) (*model.Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := s.Freezer.ValidatePublish(b.Status, snap); err != nil {
-		return nil, err
-	}
 	if err := s.Store.UpdateSnapshotStatus(snap.ID, model.SnapPublished); err != nil {
+		// The batch was already validated as publishable above, so a failure
+		// here is an unexpected store error. Roll back the draft row so no
+		// unusable draft survives a failed publish request.
+		_ = s.Store.DeleteSnapshot(snap.ID)
 		return nil, err
 	}
 	return s.Store.GetSnapshot(snap.ID)
