@@ -14,9 +14,9 @@ const (
 
 // ClassifyResult is the classifier output for one peak pair.
 type ClassifyResult struct {
-	Source  string
+	Source         string
 	IsSidelobeLike bool // offset 匹配（几何证据充分）
-	RatioOK bool
+	RatioOK        bool
 }
 
 // Classify decides the contamination source for a peak pair given the

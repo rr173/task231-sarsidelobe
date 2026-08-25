@@ -74,7 +74,7 @@ func SincEnvelope(x float64) float64 {
 	if math.Abs(x) < 1e-9 {
 		return 1.0
 	}
-	s := math.Sin(math.Pi * x) / (math.Pi * x)
+	s := math.Sin(math.Pi*x) / (math.Pi * x)
 	return s * s
 }
 

@@ -75,10 +75,10 @@ func runSelfTest(svc *service.Service) (map[string]any, error) {
 		return nil, fmt.Errorf("snapshot not published: %s", snap.Status)
 	}
 	return map[string]any{
-		"batch_id":     b.ID,
-		"candidates":   len(cands),
-		"snapshot_id":  snap.ID,
+		"batch_id":         b.ID,
+		"candidates":       len(cands),
+		"snapshot_id":      snap.ID,
 		"snapshot_version": snap.Version,
-		"status":       "ok",
+		"status":           "ok",
 	}, nil
 }

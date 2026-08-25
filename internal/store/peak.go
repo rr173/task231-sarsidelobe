@@ -37,9 +37,6 @@ func (s *Store) InsertPeakRegions(batchID int64, regions []model.PeakRegion) err
 				r.AzimuthStart, r.AzimuthEnd, r.PeakAzimuth, r.PeakIntensityDB,
 				r.Status, nowISO())
 			if err != nil {
-				if isUniqueViolation(err) {
-					return model.ErrRepeatedRegion
-				}
 				return err
 			}
 			id, err := res.LastInsertId()

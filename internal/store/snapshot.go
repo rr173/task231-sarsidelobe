@@ -11,6 +11,16 @@ import (
 // CreateSnapshot inserts a new snapshot version for a batch. Version numbers
 // start at 1 and increment per batch.
 func (s *Store) CreateSnapshot(batchID int64, content string) (*model.Snapshot, error) {
+	var batchStatus string
+	if err := s.db.QueryRow(`SELECT status FROM batches WHERE id=?`, batchID).Scan(&batchStatus); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, model.ErrNotFound
+		}
+		return nil, err
+	}
+	if model.IsBatchImmutable(batchStatus) {
+		return nil, model.ErrArchivedMutation
+	}
 	var version int
 	err := s.db.QueryRow(
 		`SELECT COALESCE(MAX(version),0)+1 FROM snapshots WHERE batch_id=?`, batchID).Scan(&version)
@@ -92,6 +102,44 @@ func (s *Store) UpdateSnapshotStatus(id int64, status string) error {
 		return model.ErrNotFound
 	}
 	return nil
+}
+
+// ReplaceSnapshot atomically supersedes a published snapshot and creates the
+// next published version with the supplied frozen content.
+func (s *Store) ReplaceSnapshot(oldID int64, content string) (*model.Snapshot, error) {
+	var out model.Snapshot
+	err := s.Tx(func(tx *sql.Tx) error {
+		var batchID int64
+		var status string
+		if err := tx.QueryRow(`SELECT batch_id,status FROM snapshots WHERE id=?`, oldID).Scan(&batchID, &status); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return model.ErrNotFound
+			}
+			return err
+		}
+		if status != model.SnapPublished {
+			return model.ErrStateTransition
+		}
+		var version int
+		if err := tx.QueryRow(`SELECT COALESCE(MAX(version),0)+1 FROM snapshots WHERE batch_id=?`, batchID).Scan(&version); err != nil {
+			return err
+		}
+		now := nowISO()
+		if _, err := tx.Exec(`UPDATE snapshots SET status=?, updated_at=? WHERE id=?`, model.SnapSuperseded, now, oldID); err != nil {
+			return err
+		}
+		res, err := tx.Exec(`INSERT INTO snapshots(batch_id,version,status,content,created_at,updated_at) VALUES(?,?,?,?,?,?)`, batchID, version, model.SnapPublished, content, now, now)
+		if err != nil {
+			return err
+		}
+		out = model.Snapshot{ID: 0, BatchID: batchID, Version: version, Status: model.SnapPublished, Content: content, CreatedAt: now, UpdatedAt: now}
+		out.ID, err = res.LastInsertId()
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // StartAnalysisRun records a pending analysis run.

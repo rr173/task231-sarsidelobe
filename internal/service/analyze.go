@@ -61,6 +61,21 @@ func (s *Service) AnalyzeBatch(batchID int64) ([]model.Candidate, error) {
 		_ = s.Store.FinishAnalysisRun(run.ID, 0, true)
 		return nil, err
 	}
+	for _, c := range cands {
+		for _, peakID := range []int64{c.MainPeakID, c.SidelobePeakID} {
+			p, err := s.Store.GetPeakRegion(peakID)
+			if err != nil {
+				_ = s.Store.FinishAnalysisRun(run.ID, 0, true)
+				return nil, err
+			}
+			if p.Status == model.PeakRaw {
+				if err := s.Store.UpdatePeakStatus(peakID, model.PeakCandidate); err != nil {
+					_ = s.Store.FinishAnalysisRun(run.ID, 0, true)
+					return nil, err
+				}
+			}
+		}
+	}
 	// Move the batch to needs_review when candidates need a human verdict.
 	if review.NeedsReview(cands) && model.CanBatchTransition(b.Status, model.BatchReview) {
 		_ = s.Store.UpdateBatchStatus(batchID, model.BatchReview)

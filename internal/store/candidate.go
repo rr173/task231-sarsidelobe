@@ -163,6 +163,51 @@ func (s *Store) ResolvePeakByCandidate(c *model.Candidate, confirmed bool) error
 	return s.UpdatePeakStatus(c.SidelobePeakID, sideStatus)
 }
 
+// ResolveCandidate atomically records the candidate verdict and propagates it
+// to both source peaks. A sealed source peak rejects the whole transition.
+func (s *Store) ResolveCandidate(c *model.Candidate, next string, confirmed bool) error {
+	return s.Tx(func(tx *sql.Tx) error {
+		var mainStatus, sideStatus string
+		if err := tx.QueryRow(`SELECT status FROM peak_regions WHERE id=?`, c.MainPeakID).Scan(&mainStatus); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return model.ErrNotFound
+			}
+			return err
+		}
+		if err := tx.QueryRow(`SELECT status FROM peak_regions WHERE id=?`, c.SidelobePeakID).Scan(&sideStatus); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return model.ErrNotFound
+			}
+			return err
+		}
+		mainNext, sideNext := model.PeakScatter, model.PeakExcluded
+		if confirmed {
+			sideNext = model.PeakSidelobe
+		}
+		if mainStatus == model.PeakExcluded || sideStatus == model.PeakExcluded || mainStatus == model.PeakSidelobe || sideStatus == model.PeakSidelobe {
+			return model.ErrPeakSealed
+		}
+		if !model.CanPeakTransition(mainStatus, mainNext) || !model.CanPeakTransition(sideStatus, sideNext) {
+			return model.ErrStateTransition
+		}
+		res, err := tx.Exec(`UPDATE candidates SET status=?, updated_at=? WHERE id=?`, next, nowISO(), c.ID)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			if err != nil {
+				return err
+			}
+			return model.ErrNotFound
+		}
+		if _, err := tx.Exec(`UPDATE peak_regions SET status=? WHERE id=?`, mainNext, c.MainPeakID); err != nil {
+			return err
+		}
+		_, err = tx.Exec(`UPDATE peak_regions SET status=? WHERE id=?`, sideNext, c.SidelobePeakID)
+		return err
+	})
+}
+
 func scanCandidateRows(r rowScanner, c *model.Candidate) error {
 	return r.Scan(&c.ID, &c.BatchID, &c.MainPeakID, &c.SidelobePeakID,
 		&c.AzimuthOffsetM, &c.OffsetUnits, &c.IntensityRatioDB, &c.ResponseScore,

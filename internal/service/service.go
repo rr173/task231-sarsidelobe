@@ -23,6 +23,8 @@ type Service struct {
 	Policy    review.Policy
 	analyzeMu sync.Mutex
 	analyzing map[int64]bool // per-batch analysis lock
+	peakMu    sync.Mutex
+	calMu     sync.Mutex
 }
 
 // New builds a Service over the given store.
@@ -110,8 +112,11 @@ func (s *Service) RegisterImagingParams(batchID int64, p *model.ImagingParams) (
 	if err != nil {
 		return nil, err
 	}
-	if b.Status == model.BatchArchived {
-		return nil, model.ErrArchivedMutation
+	if !model.CanUpdateImagingParams(b.Status) {
+		if b.Status == model.BatchArchived {
+			return nil, model.ErrArchivedMutation
+		}
+		return nil, model.ErrStateTransition
 	}
 	if err := imaging.ValidateParams(p); err != nil {
 		return nil, err
@@ -127,6 +132,8 @@ func (s *Service) GetImagingParams(batchID int64) (*model.ImagingParams, error) 
 
 // CreateCalibration adds a calibration version (auto version number).
 func (s *Service) CreateCalibration(name string, firstLobeDB, offsetTol, ratioMinDB, ratioMaxDB float64) (*model.CalibrationVersion, error) {
+	s.calMu.Lock()
+	defer s.calMu.Unlock()
 	if name == "" || firstLobeDB <= 0 || offsetTol <= 0 || ratioMinDB <= 0 || ratioMaxDB <= ratioMinDB {
 		return nil, model.ErrBadRequest
 	}
@@ -147,12 +154,17 @@ func (s *Service) ActivateCalibration(id int64) (*model.CalibrationVersion, erro
 // already exists are skipped, all remaining regions are inserted in one
 // transaction. Any invalid region aborts the whole batch.
 func (s *Service) RegisterPeaks(batchID int64, in []model.PeakRegion) (inserted int, err error) {
+	s.peakMu.Lock()
+	defer s.peakMu.Unlock()
 	b, err := s.Store.GetBatch(batchID)
 	if err != nil {
 		return 0, err
 	}
 	if b.Status == model.BatchArchived {
 		return 0, model.ErrArchivedMutation
+	}
+	if !model.CanRegisterAnalysisInput(b.Status) {
+		return 0, model.ErrStateTransition
 	}
 	existing, err := s.Store.ExistingRegionHashes(batchID)
 	if err != nil {
@@ -284,18 +296,8 @@ func (s *Service) reviewCandidate(id int64, forceConfirmed, forceRejected bool) 
 			next = model.CandInsufficient
 		}
 	}
-	if err := s.Store.UpdateCandidateStatus(id, next); err != nil {
+	if err := s.Store.ResolveCandidate(c, next, confirmed); err != nil {
 		return nil, err
-	}
-	// Propagate the verdict onto the source peaks.
-	if confirmed {
-		if err := s.Store.ResolvePeakByCandidate(c, true); err != nil {
-			return nil, err
-		}
-	} else if next == model.CandRejected {
-		if err := s.Store.ResolvePeakByCandidate(c, false); err != nil {
-			return nil, err
-		}
 	}
 	return s.Store.GetCandidate(id)
 }
@@ -332,13 +334,28 @@ func (s *Service) PublishSnapshot(batchID int64) (*model.Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := s.Freezer.ValidatePublishBatch(b.Status); err != nil {
+		return nil, err
+	}
+	if err := s.Freezer.ValidateCreate(b.Status); err != nil {
+		return nil, err
+	}
 	params, err := s.Store.GetImagingParams(batchID)
 	if err != nil {
 		return nil, model.ErrNoParams
 	}
-	cal, err := s.activeCalibration()
-	if err != nil {
-		return nil, err
+	var cal imaging.Calibration
+	if params.CalibrationID != 0 {
+		v, err := s.Store.GetCalibration(params.CalibrationID)
+		if err != nil {
+			return nil, err
+		}
+		cal = imaging.FromVersion(v)
+	} else {
+		cal, err = s.activeCalibration()
+		if err != nil {
+			return nil, err
+		}
 	}
 	geom := imaging.Compute(*params)
 	cands, err := s.Store.ListCandidates(batchID, "")
@@ -373,13 +390,10 @@ func (s *Service) SupersedeSnapshot(id int64) (*model.Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := s.Freezer.ValidateSupersede(b.Status, snap); err != nil {
+	if err := s.Freezer.ValidateReplacement(b.Status, snap); err != nil {
 		return nil, err
 	}
-	if err := s.Store.UpdateSnapshotStatus(id, model.SnapSuperseded); err != nil {
-		return nil, err
-	}
-	return s.Store.GetSnapshot(id)
+	return s.Store.ReplaceSnapshot(id, snap.Content)
 }
 
 // ListSnapshots returns all snapshots of a batch.

@@ -12,6 +12,27 @@ type Freezer struct{}
 // NewFreezer builds a Freezer.
 func NewFreezer() *Freezer { return &Freezer{} }
 
+// ValidatePublishBatch enforces the batch lifecycle before a snapshot row is
+// created.
+func (f *Freezer) ValidatePublishBatch(batchStatus string) error {
+	if batchStatus == model.BatchArchived {
+		return model.ErrArchivedMutation
+	}
+	if !model.CanPublishSnapshot(batchStatus) {
+		return model.ErrStateTransition
+	}
+	return nil
+}
+
+// ValidateCreate prevents any new snapshot row from being created for an
+// archived batch, including callers that bypass the publish state check.
+func (f *Freezer) ValidateCreate(batchStatus string) error {
+	if model.IsBatchImmutable(batchStatus) {
+		return model.ErrArchivedMutation
+	}
+	return nil
+}
+
 // ValidatePublish checks that publishing is allowed for the batch state and
 // that the snapshot is a draft.
 func (f *Freezer) ValidatePublish(batchStatus string, snap *model.Snapshot) error {
@@ -34,6 +55,12 @@ func (f *Freezer) ValidateSupersede(batchStatus string, snap *model.Snapshot) er
 		return model.ErrArchivedMutation
 	}
 	return nil
+}
+
+// ValidateReplacement applies the same lifecycle rules before the store
+// atomically replaces a published snapshot with its next version.
+func (f *Freezer) ValidateReplacement(batchStatus string, snap *model.Snapshot) error {
+	return f.ValidateSupersede(batchStatus, snap)
 }
 
 // ImmutableContent returns true once a snapshot is published: content must

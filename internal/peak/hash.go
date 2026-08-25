@@ -34,8 +34,8 @@ func Deduplicate(in []model.PeakRegion, existing map[string]bool) ([]model.PeakR
 
 // Pair is an ordered (main, candidate) peak pair used by analysis.
 type Pair struct {
-	Main   model.PeakRegion
-	Cand   model.PeakRegion
+	Main model.PeakRegion
+	Cand model.PeakRegion
 }
 
 // StrongScatterCandidates returns the ordered list of peak pairs that could
