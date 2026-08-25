@@ -340,31 +340,9 @@ func (s *Service) PublishSnapshot(batchID int64) (*model.Snapshot, error) {
 	if err := s.Freezer.ValidateCreate(b.Status); err != nil {
 		return nil, err
 	}
-	params, err := s.Store.GetImagingParams(batchID)
-	if err != nil {
-		return nil, model.ErrNoParams
-	}
-	var cal imaging.Calibration
-	if params.CalibrationID != 0 {
-		v, err := s.Store.GetCalibration(params.CalibrationID)
-		if err != nil {
-			return nil, err
-		}
-		cal = imaging.FromVersion(v)
-	} else {
-		cal, err = s.activeCalibration()
-		if err != nil {
-			return nil, err
-		}
-	}
-	geom := imaging.Compute(*params)
-	cands, err := s.Store.ListCandidates(batchID, "")
+	content, err := s.buildSnapshotContent(b)
 	if err != nil {
 		return nil, err
-	}
-	content, err := snapshot.Build(b.Code, geom, cal, cands)
-	if err != nil {
-		return nil, fmt.Errorf("build snapshot content: %w", err)
 	}
 	snap, err := s.Store.CreateSnapshot(batchID, content)
 	if err != nil {
@@ -379,8 +357,45 @@ func (s *Service) PublishSnapshot(batchID int64) (*model.Snapshot, error) {
 	return s.Store.GetSnapshot(snap.ID)
 }
 
+// buildSnapshotContent freezes the batch's current diagnosis (geometry,
+// calibration and candidate verdicts) into the immutable JSON blob stored
+// inside a snapshot row. Publish and supersede share this so every published
+// version reflects the same frozen evidence chain.
+func (s *Service) buildSnapshotContent(b *model.Batch) (string, error) {
+	params, err := s.Store.GetImagingParams(b.ID)
+	if err != nil {
+		return "", model.ErrNoParams
+	}
+	var cal imaging.Calibration
+	if params.CalibrationID != 0 {
+		v, err := s.Store.GetCalibration(params.CalibrationID)
+		if err != nil {
+			return "", err
+		}
+		cal = imaging.FromVersion(v)
+	} else {
+		cal, err = s.activeCalibration()
+		if err != nil {
+			return "", err
+		}
+	}
+	geom := imaging.Compute(*params)
+	cands, err := s.Store.ListCandidates(b.ID, "")
+	if err != nil {
+		return "", err
+	}
+	content, err := snapshot.Build(b.Code, geom, cal, cands)
+	if err != nil {
+		return "", fmt.Errorf("build snapshot content: %w", err)
+	}
+	return content, nil
+}
+
 // SupersedeSnapshot replaces a published snapshot with a new draft-free
-// version (a newer snapshot supersedes the old one).
+// version: the old version is marked superseded and a newer published
+// version (next version number, content frozen from the current diagnosis)
+// is created atomically, so the batch always retains a published version.
+// The newly published snapshot is returned.
 func (s *Service) SupersedeSnapshot(id int64) (*model.Snapshot, error) {
 	snap, err := s.Store.GetSnapshot(id)
 	if err != nil {
@@ -393,10 +408,14 @@ func (s *Service) SupersedeSnapshot(id int64) (*model.Snapshot, error) {
 	if err := s.Freezer.ValidateSupersede(b.Status, snap); err != nil {
 		return nil, err
 	}
-	if err := s.Store.UpdateSnapshotStatus(id, model.SnapSuperseded); err != nil {
+	if err := s.Freezer.ValidateReplacement(b.Status, snap); err != nil {
 		return nil, err
 	}
-	return s.Store.GetSnapshot(id)
+	content, err := s.buildSnapshotContent(b)
+	if err != nil {
+		return nil, err
+	}
+	return s.Store.ReplaceSnapshot(id, content)
 }
 
 // ListSnapshots returns all snapshots of a batch.

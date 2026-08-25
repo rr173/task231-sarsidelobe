@@ -105,12 +105,74 @@ func (s *Store) UpdateSnapshotStatus(id int64, status string) error {
 }
 
 // ReplaceSnapshot atomically supersedes a published snapshot and creates the
-// next published version with the supplied frozen content.
+// next published version with the supplied frozen content. The old snapshot
+// is moved to superseded and a new row (next version, published status) is
+// inserted in the same transaction, so a supersede can never leave the batch
+// without a published version. The newly published snapshot is returned.
 func (s *Store) ReplaceSnapshot(oldID int64, content string) (*model.Snapshot, error) {
-	if err := s.UpdateSnapshotStatus(oldID, model.SnapSuperseded); err != nil {
+	var out model.Snapshot
+	err := s.Tx(func(tx *sql.Tx) error {
+		var batchID int64
+		var status string
+		err := tx.QueryRow(`SELECT batch_id,status FROM snapshots WHERE id=?`, oldID).
+			Scan(&batchID, &status)
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("load snapshot to supersede: %w", err)
+		}
+		// Only a still-published snapshot may be superseded. A snapshot that
+		// was already superseded by a concurrent call must not spawn an
+		// orphaned extra version.
+		if status != model.SnapPublished {
+			return model.ErrSnapshotFrozen
+		}
+		now := nowISO()
+		res, err := tx.Exec(`UPDATE snapshots SET status=?, updated_at=? WHERE id=?`,
+			model.SnapSuperseded, now, oldID)
+		if err != nil {
+			return fmt.Errorf("supersede old snapshot: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return model.ErrNotFound
+		}
+		var version int
+		if err := tx.QueryRow(
+			`SELECT COALESCE(MAX(version),0)+1 FROM snapshots WHERE batch_id=?`, batchID).
+			Scan(&version); err != nil {
+			return fmt.Errorf("next snapshot version: %w", err)
+		}
+		ins, err := tx.Exec(`
+			INSERT INTO snapshots(batch_id,version,status,content,created_at,updated_at)
+			VALUES(?,?,?,?,?,?)`,
+			batchID, version, model.SnapPublished, content, now, now)
+		if err != nil {
+			return fmt.Errorf("create replacement snapshot: %w", err)
+		}
+		newID, err := ins.LastInsertId()
+		if err != nil {
+			return err
+		}
+		out = model.Snapshot{
+			ID:        newID,
+			BatchID:   batchID,
+			Version:   version,
+			Status:    model.SnapPublished,
+			Content:   content,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	return s.GetSnapshot(oldID)
+	return &out, nil
 }
 
 // StartAnalysisRun records a pending analysis run.
