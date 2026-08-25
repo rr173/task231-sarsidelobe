@@ -106,11 +106,20 @@ func (s *Service) ArchiveBatch(id int64) (*model.Batch, error) {
 }
 
 // RegisterImagingParams validates and stores the acquisition geometry. The
-// polarization mode is mandatory; archived batches reject any update.
+// polarization mode is mandatory. Archived batches reject any update, and once
+// analysis has moved a batch into needs_review the parameters are frozen: they
+// are the geometric basis of the already-generated candidates, so changing
+// them would silently replace the analysis under review.
 func (s *Service) RegisterImagingParams(batchID int64, p *model.ImagingParams) (*model.ImagingParams, error) {
-	_, err := s.Store.GetBatch(batchID)
+	b, err := s.Store.GetBatch(batchID)
 	if err != nil {
 		return nil, err
+	}
+	if b.Status == model.BatchArchived {
+		return nil, model.ErrArchivedMutation
+	}
+	if !model.CanUpdateImagingParams(b.Status) {
+		return nil, model.ErrStateTransition
 	}
 	if err := imaging.ValidateParams(p); err != nil {
 		return nil, err

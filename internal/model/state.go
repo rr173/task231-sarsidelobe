@@ -119,7 +119,10 @@ func CanRegisterAnalysisInput(status string) bool {
 }
 
 // CanUpdateImagingParams reports whether acquisition geometry is still mutable
-// before analysis has produced reviewable findings.
+// before analysis has produced reviewable findings. Once a batch enters
+// needs_review the imaging parameters are frozen — they are the geometric basis
+// of the already-generated candidates, so changing them would silently replace
+// the analysis under review.
 func CanUpdateImagingParams(status string) bool {
-	return true
+	return status == BatchReceiving || status == BatchPending
 }
