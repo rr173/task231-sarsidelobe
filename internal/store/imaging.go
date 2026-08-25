@@ -77,8 +77,15 @@ func (s *Store) GetImagingParams(batchID int64) (*model.ImagingParams, error) {
 }
 
 // CreateCalibration inserts a new calibration version (version number is
-// auto-incremented relative to the current max).
+// auto-incremented relative to the current max). The read-then-write of
+// MAX(version)+1 -> INSERT is serialized with writeMu so that concurrent
+// creators each observe a strictly increasing max and therefore claim a
+// distinct, contiguous version; the UNIQUE(version) constraint would
+// otherwise reject every request that raced on the same max.
 func (s *Store) CreateCalibration(name string, firstLobeDB, offsetTol, ratioMinDB, ratioMaxDB float64) (*model.CalibrationVersion, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	var version int
 	err := s.db.QueryRow(`SELECT COALESCE(MAX(version),0)+1 FROM calibration_versions`).Scan(&version)
 	if err != nil {
