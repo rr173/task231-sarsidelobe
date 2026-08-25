@@ -113,9 +113,16 @@ func CanPublishSnapshot(status string) bool {
 }
 
 // CanRegisterAnalysisInput reports whether raw peak inputs may still be
-// appended before analysis has entered review.
+// appended before analysis has produced reviewable findings. Once a batch has
+// entered review (or any later state) the peak set is frozen so the data
+// reviewed by a human cannot be changed underneath them.
 func CanRegisterAnalysisInput(status string) bool {
-	return true
+	switch status {
+	case BatchReceiving, BatchPending:
+		return true
+	default:
+		return false
+	}
 }
 
 // CanUpdateImagingParams reports whether acquisition geometry is still mutable

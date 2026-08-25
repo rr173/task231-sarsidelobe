@@ -163,6 +163,11 @@ func (s *Service) RegisterPeaks(batchID int64, in []model.PeakRegion) (inserted 
 	if b.Status == model.BatchArchived {
 		return 0, model.ErrArchivedMutation
 	}
+	// Once analysis has entered review the peak set is frozen: appending new
+	// regions would change the data the reviewer is judging.
+	if !model.CanRegisterAnalysisInput(b.Status) {
+		return 0, model.ErrStateTransition
+	}
 	existing, err := s.Store.ExistingRegionHashes(batchID)
 	if err != nil {
 		return 0, err
