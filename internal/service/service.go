@@ -152,7 +152,11 @@ func (s *Service) ActivateCalibration(id int64) (*model.CalibrationVersion, erro
 
 // RegisterPeaks ingests peak regions idempotently: regions whose content hash
 // already exists are skipped, all remaining regions are inserted in one
-// transaction. Any invalid region aborts the whole batch.
+// transaction. Any invalid region aborts the whole batch. The
+// read-filter-insert sequence is serialised per service so that concurrent
+// registrations of the same region can't both observe an empty existing set
+// and race into the unique (batch_id, region_hash) constraint — a duplicate
+// region is a no-op (inserted=0) instead of an error.
 func (s *Service) RegisterPeaks(batchID int64, in []model.PeakRegion) (inserted int, err error) {
 	b, err := s.Store.GetBatch(batchID)
 	if err != nil {
@@ -164,7 +168,18 @@ func (s *Service) RegisterPeaks(batchID int64, in []model.PeakRegion) (inserted 
 	if !model.CanRegisterAnalysisInput(b.Status) {
 		return 0, model.ErrStateTransition
 	}
-	clean, err := peak.Deduplicate(in, map[string]bool{})
+	// Hold peakMu across the read-filter-insert critical section. Without
+	// serialisation two concurrent requests for the same region would each
+	// read the existing hashes before either has inserted, both pass the
+	// deduplication check, and both attempt the insert — the second hitting
+	// the unique constraint. The mutex makes the compare-then-insert atomic.
+	s.peakMu.Lock()
+	defer s.peakMu.Unlock()
+	existing, err := s.Store.ExistingRegionHashes(batchID)
+	if err != nil {
+		return 0, err
+	}
+	clean, err := peak.Deduplicate(in, existing)
 	if err != nil {
 		return 0, err
 	}
